@@ -3,12 +3,46 @@
 import sys
 import time
 
+import numpy as np
 import torch
 
 from ultralytics.utils import LOGGER
 from ultralytics.utils.metrics import batch_probiou, box_iou
 from ultralytics.utils.ops import xywh2xyxy
 
+
+def soft_nms(boxes, scores, iou_thresh=0.5, sigma=0.5, score_thresh=0.001):
+    N = boxes.shape[0]
+    indexes = torch.arange(N)
+
+    for i in range(N):
+        max_score_idx = torch.argmax(scores[i:]) + i
+        boxes[i], boxes[max_score_idx] = boxes[max_score_idx], boxes[i]
+        scores[i], scores[max_score_idx] = scores[max_score_idx], scores[i]
+
+        box_i = boxes[i]
+
+        for j in range(i + 1, N):
+            box_j = boxes[j]
+
+            xx1 = max(box_i[0], box_j[0])
+            yy1 = max(box_i[1], box_j[1])
+            xx2 = min(box_i[2], box_j[2])
+            yy2 = min(box_i[3], box_j[3])
+
+            w = max(0, xx2 - xx1)
+            h = max(0, yy2 - yy1)
+
+            inter = w * h
+            area_i = (box_i[2]-box_i[0])*(box_i[3]-box_i[1])
+            area_j = (box_j[2]-box_j[0])*(box_j[3]-box_j[1])
+
+            iou = inter / (area_i + area_j - inter)
+
+            scores[j] = scores[j] * np.exp(-(iou ** 2) / sigma)
+
+    keep = scores > score_thresh
+    return boxes[keep], scores[keep]
 
 def non_max_suppression(
     prediction,
@@ -147,13 +181,14 @@ def non_max_suppression(
             i = TorchNMS.fast_nms(boxes, scores, iou_thres, iou_func=batch_probiou)
         else:
             boxes = x[:, :4] + c  # boxes (offset by class)
+            i = soft_nms(boxes, scores, iou_thres)
             # Speed strategy: torchvision for val or already loaded (faster), TorchNMS for predict (lower latency)
-            if "torchvision" in sys.modules:
-                import torchvision  # scope as slow import
-
-                i = torchvision.ops.nms(boxes, scores, iou_thres)
-            else:
-                i = TorchNMS.nms(boxes, scores, iou_thres)
+            # if "torchvision" in sys.modules:
+            #     import torchvision  # scope as slow import
+            #
+            #     i = torchvision.ops.nms(boxes, scores, iou_thres)
+            # else:
+            #     i = TorchNMS.nms(boxes, scores, iou_thres)
         i = i[:max_det]  # limit detections
 
         output[xi] = x[i]
