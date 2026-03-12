@@ -1,9 +1,8 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
+import math
 import sys
 import time
 
-import numpy as np
 import torch
 
 from ultralytics.utils import LOGGER
@@ -11,14 +10,12 @@ from ultralytics.utils.metrics import batch_probiou, box_iou
 from ultralytics.utils.ops import xywh2xyxy
 
 
-def soft_nms(boxes, scores, iou_thresh=0.5, sigma=0.5, score_thresh=0.001):
+def soft_nms(boxes, scores, iou_thres=0.5, sigma=0.5):
     N = boxes.shape[0]
-    indexes = torch.arange(N)
-
     for i in range(N):
-        max_score_idx = torch.argmax(scores[i:]) + i
-        boxes[i], boxes[max_score_idx] = boxes[max_score_idx], boxes[i]
-        scores[i], scores[max_score_idx] = scores[max_score_idx], scores[i]
+        max_idx = torch.argmax(scores[i:]) + i
+        boxes[i], boxes[max_idx] = boxes[max_idx].clone(), boxes[i].clone()
+        scores[i], scores[max_idx] = scores[max_idx], scores[i]
 
         box_i = boxes[i]
 
@@ -37,12 +34,12 @@ def soft_nms(boxes, scores, iou_thresh=0.5, sigma=0.5, score_thresh=0.001):
             area_i = (box_i[2]-box_i[0])*(box_i[3]-box_i[1])
             area_j = (box_j[2]-box_j[0])*(box_j[3]-box_j[1])
 
-            iou = inter / (area_i + area_j - inter)
+            iou = inter / (area_i + area_j - inter + 1e-6)
 
-            scores[j] = scores[j] * np.exp(-(iou ** 2) / sigma)
+            scores[j] = scores[j] * math.exp(-(iou ** 2) / sigma)
 
-    keep = scores > score_thresh
-    return boxes[keep], scores[keep]
+    keep = scores > 0.001
+    return torch.where(keep)[0]
 
 def non_max_suppression(
     prediction,
